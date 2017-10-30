@@ -32,5 +32,8 @@
         'cADFSGlobalAuthenticationPolicy';
         'cADFSRelyingPartyTrust';
         'cADFSSamlEndpoint';
+        'cADFSNode';
+        'cADFSDeviceRegistration';
+        'cADFSWebApplicationProxy';
         );
 }
