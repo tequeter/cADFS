@@ -34,6 +34,5 @@
         'cADFSSamlEndpoint';
         'cADFSNode';
         'cADFSDeviceRegistration';
-        'cADFSWebApplicationProxy';
         );
 }
