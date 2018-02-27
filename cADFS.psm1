@@ -24,20 +24,27 @@ function InstallADFSFarm {
 
     .Parameter
     #>
-    [CmdletBinding(DefaultParameterSetName = 'CertificateThumbprint')]
+    [CmdletBinding(DefaultParameterSetName = 'CertificateThumbprintServiceAccount')]
     param (
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateThumbprintServiceAccount')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateSubjectServiceAccount')]
         [pscredential] $ServiceCredential,
         [Parameter(Mandatory = $true)]
         [pscredential] $InstallCredential,
-        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateThumbprint')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateThumbprintGMSA')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateSubjectGMSA')]
+        [string] $GroupServiceAccountIdentifier,
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateThumbprintServiceAccount')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateThumbprintGMSA')]
         [string] $CertificateThumbprint,
-        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateSubject')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateSubjectServiceAccount')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateSubjectGMSA')]
         [string] $CertificateSubject,
         [Parameter(Mandatory = $true)]
         [string] $DisplayName,
         [Parameter(Mandatory = $true)]
-        [string] $ServiceName
+        [string] $ServiceName,
+        [hashtable] $AdminConfiguration
 
     )
 
@@ -53,13 +60,35 @@ function InstallADFSFarm {
 
     Write-Verbose -Message ('Entering function {0}' -f $CmdletName);
 
-    Install-AdfsFarm `
-        -CertificateThumbprint:$CertificateThumbprint `
-        -Credential $installCredential `
-        -FederationServiceDisplayName $DisplayName `
-        -FederationServiceName $ServiceName `
-        -OverwriteConfiguration:$true `
-        -ServiceAccountCredential $serviceCredential;
+    if($AdminConfiguration){
+        Write-Verbose -Message ("Admin configuration is valid $AdminConfiguration");
+    }
+    else{
+        Write-Verbose -Message ("Admin configuration is not valid $AdminConfiguration");
+        $AdminConfiguration = @{}
+    }
+
+    if ($serviceCredential){
+        Install-AdfsFarm `
+            -CertificateThumbprint:$CertificateThumbprint `
+            -Credential $installCredential `
+            -FederationServiceDisplayName $DisplayName `
+            -FederationServiceName $ServiceName `
+            -OverwriteConfiguration:$true `
+            -ServiceAccountCredential $serviceCredential `
+            -AdminConfiguration $AdminConfiguration
+    }
+    else{
+        Install-AdfsFarm `
+            -CertificateThumbprint:$CertificateThumbprint `
+            -Credential $installCredential `
+            -FederationServiceDisplayName $DisplayName `
+            -FederationServiceName $ServiceName `
+            -OverwriteConfiguration:$true `
+            -GroupServiceAccountIdentifier $GroupServiceAccountIdentifier `
+            -AdminConfiguration $AdminConfiguration 
+    }
+    
 
     Write-Verbose -Message ('Leaving function {0}' -f $CmdletName);
 }
@@ -101,8 +130,14 @@ class cADFSFarm {
     <#
     The ServiceCredential property is a PSCredential that represents the username/password that the
     #>
-    [DscProperty(Mandatory)]
+    [DscProperty()]
     [pscredential] $ServiceCredential;
+
+    <#
+    The name of the group service account to be used by the ADFS service
+    #>
+    [DscProperty()]
+    [string] $GroupServiceAccountIdentifier;
 
     <#
     The InstallCredential property is a PSCredential that represents the username/password of an Active Directory user account that is a member of
@@ -110,13 +145,19 @@ class cADFSFarm {
     #>
     [DscProperty(Mandatory)]
     [pscredential] $InstallCredential;
+    
+    <#
+    The name of the group service account to be used by the ADFS service
+    #>
+    [DscProperty()]
+    [hashtable] $AdminConfiguration;
 
     [cADFSFarm] Get() {
 
         Write-Verbose -Message 'Starting retrieving ADFS Farm configuration.';
 
         try {
-            $AdfsProperties = Get-AdfsProperties -ErrorAction Stop;
+            Get-AdfsProperties -ErrorAction Stop;
         }
         catch {
             Write-Verbose -Message ('Error occurred while retrieving ADFS properties: {0}' -f $global:Error[0].Exception.Message);
@@ -174,7 +215,6 @@ class cADFSFarm {
             if (!$AdfsProperties) {
                 Write-Verbose -Message 'Installing Active Directory Federation Services (ADFS) farm.';
                 $AdfsFarm = @{
-                    ServiceCredential = $this.ServiceCredential;
                     InstallCredential = $this.InstallCredential;
                     DisplayName = $this.DisplayName;
                     ServiceName = $this.ServiceName;
@@ -190,14 +230,32 @@ class cADFSFarm {
                     Throw "No Certificate details provided, cannot configure ADFS Farm."
                 }
 
+                if($this.ServiceCredential) {
+                    $AdfsFarm.Add('ServiceCredential', $this.ServiceCredential);
+                }
+                elseif ($this.GroupServiceAccountIdentifier) {
+                    $AdfsFarm.Add('GroupServiceAccountIdentifier', $this.GroupServiceAccountIdentifier);
+                }
+                else {
+                    Throw "No service account nor GMSA details provided, cannot configure ADFS Farm."
+                }
+
                 InstallADFSFarm @AdfsFarm;
             }
 
             if ($AdfsProperties) {
                 Write-Verbose -Message 'Configuring Active Directory Federation Services (ADFS) properties.';
-                $AdfsProperties = @{
-                    DisplayName = $this.DisplayName;
-                };
+                if($this.AdminConfiguration){
+                    $this.AdminConfiguration.Add('DisplayName', $this.DisplayName);
+                    $AdfsProperties = $this.AdminConfiguration
+                }
+                else{
+                    $AdfsProperties = @{
+                        DisplayName = $this.DisplayName;
+                    }
+                }
+                
+                $this.AdminConfiguration
                 Set-AdfsProperties @AdfsProperties;
             }
         }
