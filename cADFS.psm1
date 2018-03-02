@@ -199,8 +199,13 @@ class cADFSFarm {
             }
         }
 
-        Write-Verbose -Message 'Compliance status {0}' -f $Compliant;
-
+        if($Compliant){
+            Write-Verbose -Message 'Compliance status: true'
+        }
+        else{
+            Write-Verbose -Message 'Compliance status: false'
+        }
+        
         return $Compliant;
     }
 
