@@ -60,35 +60,27 @@ function InstallADFSFarm {
 
     Write-Verbose -Message ('Entering function {0}' -f $CmdletName);
 
-    if($AdminConfiguration){
-        Write-Verbose -Message ("Admin configuration is valid $AdminConfiguration");
-    }
-    else{
-        Write-Verbose -Message ("Admin configuration is not valid $AdminConfiguration");
-        $AdminConfiguration = @{}
+    $adfsConfig = @{
+        CertificateThumbprint           = $CertificateThumbprint
+        Credential                      = $installCredential
+        FederationServiceDisplayName    = $DisplayName
+        FederationServiceName           = $ServiceName
+        OverwriteConfiguration          = $true
+
     }
 
     if ($serviceCredential){
-        Install-AdfsFarm `
-            -CertificateThumbprint:$CertificateThumbprint `
-            -Credential $installCredential `
-            -FederationServiceDisplayName $DisplayName `
-            -FederationServiceName $ServiceName `
-            -OverwriteConfiguration:$true `
-            -ServiceAccountCredential $serviceCredential `
-            -AdminConfiguration $AdminConfiguration
+        $adfsConfig.Add('ServiceAccountCredential', $serviceCredential);
     }
     else{
-        Install-AdfsFarm `
-            -CertificateThumbprint:$CertificateThumbprint `
-            -Credential $installCredential `
-            -FederationServiceDisplayName $DisplayName `
-            -FederationServiceName $ServiceName `
-            -OverwriteConfiguration:$true `
-            -GroupServiceAccountIdentifier $GroupServiceAccountIdentifier `
-            -AdminConfiguration $AdminConfiguration 
+        $adfsConfig.Add('GroupServiceAccountIdentifier', $GroupServiceAccountIdentifier);
     }
-    
+
+    if($AdminConfiguration){
+        $adfsConfig.Add('AdminConfiguration', $AdminConfiguration);
+    }
+
+    Install-AdfsFarm @adfsConfig
 
     Write-Verbose -Message ('Leaving function {0}' -f $CmdletName);
 }
@@ -147,10 +139,10 @@ class cADFSFarm {
     [pscredential] $InstallCredential;
     
     <#
-    The name of the group service account to be used by the ADFS service
+    A string containing the hashtable of ADFS AdminConfiguration
     #>
     [DscProperty()]
-    [hashtable] $AdminConfiguration;
+    [String] $AdminConfiguration;
 
     [cADFSFarm] Get() {
 
@@ -188,6 +180,15 @@ class cADFSFarm {
                 Write-Verbose -Message 'ADFS Service Name doesn''t match the desired state.';
                 $Compliant = $false;
             }
+            else{
+                $AdfsConfig = Convert-StringToHashtable $this.AdminConfiguration
+
+                $AdfsConfig.GetEnumerator() | ForEach-Object{
+                    if($_.Value -ne $Properties."$($_.Name)"){
+                        $Compliant = $false;
+                    }
+                }
+            }
         }
 
         if ($this.Ensure -eq 'Absent') {
@@ -197,6 +198,8 @@ class cADFSFarm {
                 $Compliant = $false;
             }
         }
+
+        Write-Verbose -Message 'Compliance status {0}' -f $Compliant;
 
         return $Compliant;
     }
@@ -230,6 +233,11 @@ class cADFSFarm {
                     Throw "No Certificate details provided, cannot configure ADFS Farm."
                 }
 
+                if ($this.AdminConfiguration) {
+                    $AdfsConfig = Convert-StringToHashtable $this.AdminConfiguration
+                    $AdfsFarm.Add('AdminConfiguration', $AdfsConfig);
+                }
+
                 if($this.ServiceCredential) {
                     $AdfsFarm.Add('ServiceCredential', $this.ServiceCredential);
                 }
@@ -239,24 +247,25 @@ class cADFSFarm {
                 else {
                     Throw "No service account nor GMSA details provided, cannot configure ADFS Farm."
                 }
-
+                
                 InstallADFSFarm @AdfsFarm;
             }
 
             if ($AdfsProperties) {
                 Write-Verbose -Message 'Configuring Active Directory Federation Services (ADFS) properties.';
                 if($this.AdminConfiguration){
-                    $this.AdminConfiguration.Add('DisplayName', $this.DisplayName);
-                    $AdfsProperties = $this.AdminConfiguration
+                    $AdfsPropertiesNew = Convert-StringToHashtable $this.AdminConfiguration
+                    $AdfsPropertiesNew.Add('DisplayName', $this.DisplayName);
                 }
                 else{
-                    $AdfsProperties = @{
+                    $AdfsPropertiesNew = @{
                         DisplayName = $this.DisplayName;
                     }
                 }
                 
-                $this.AdminConfiguration
-                Set-AdfsProperties @AdfsProperties;
+                $tmp = $AdfsPropertiesNew.GetEnumerator()  | ForEach-Object{ "$($_.Name)=$($_.Value)" }
+                
+                Set-AdfsProperties @AdfsPropertiesNew;
             }
         }
 
@@ -859,6 +868,21 @@ function Find-Certificate {
 
     return $certs
 } # end function Find-Certificate
+
+
+function Convert-StringToHashtable {
+    Param (
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [String]
+        $String
+    )
+
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($String, [ref] $null, [ref] $null)
+    $data = $ast.Find( { $args[0] -is [System.Management.Automation.Language.HashtableAst] }, $false )
+
+    return [Hashtable] $data.SafeGetValue()
+}
 
 return;
 
