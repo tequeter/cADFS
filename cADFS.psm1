@@ -744,6 +744,285 @@ class cADFSGlobalAuthenticationPolicy {
 }
 #endregion
 
+function AddADFSNode {
+    <#
+    .Synopsis
+    Performs the configuration of the Active Directory Federation Services farm.
+
+    .Parameter
+    #>
+    [CmdletBinding(DefaultParameterSetName = 'CertificateThumbprint')]
+    param (
+        [Parameter(Mandatory = $true)]
+        [pscredential] $ServiceCredential,
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateThumbprint')]
+        [string] $CertificateThumbprint,
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateSubject')]
+        [string] $CertificateSubject,
+        [Parameter(Mandatory = $true)]
+        [string] $PrimaryADFSServer
+    )
+
+    $CmdletName = $PSCmdlet.MyInvocation.MyCommand.Name;
+
+    if ($PSBoundParameters.CertificateSubject) {
+        if ($CertificateSubject.Substring(0, 3) -ne 'CN=') {
+            $CertificateSubject = "CN=$CertificateSubject"
+        }
+        $Certificate = Find-Certificate -Subject $CertificateSubject
+        $CertificateThumbprint = $Certificate.Thumbprint
+    }
+
+    Write-Verbose -Message ('Entering function {0}' -f $CmdletName);
+
+    Add-AdfsFarmNode -CertificateThumbprint:$CertificateThumbprint `
+    -ServiceAccountCredential $serviceCredential `
+    -PrimaryComputerName $PrimaryADFSServer
+
+    Write-Verbose -Message ('Leaving function {0}' -f $CmdletName);
+}
+
+[DscResource()]
+class cADFSNode {
+    <#
+    The Ensure property is used to determine if the Active Directory Federation Service (ADFS) should be installed (Present) or not installed (Absent).
+    #>
+    [DscProperty(Mandatory)]
+    [Ensure] $Ensure;
+
+    <#
+    The PrimaryADFSServer property is the name of the Active Directory Federation Services (ADFS) Primary Server.
+    #>
+    [DscProperty(key)]
+    [string] $PrimaryADFSServer;
+
+    <#
+    The CertificateThumbprint property is the thumbprint of the certificate, located in the local computer's certificate store, that will be bound to the
+    Active Directory Federation Service (ADFS) farm.
+    #>
+    [DscProperty()]
+    [string] $CertificateThumbprint;
+
+    <#
+    The CertificateSubject property is the subject of the certificate, located in the local computer's certificate store, that will be bound to the
+    Active Directory Federation Service (ADFS) farm. Used when the certificate thumbprint is not known when generating the MOF.
+    #>
+    [DscProperty()]
+    [string] $CertificateSubject;
+
+    <#
+    The ServiceCredential property is a PSCredential that represents the username/password that the
+    #>
+    [DscProperty(Mandatory)]
+    [pscredential] $ServiceCredential;
+
+    [cADFSNode] Get() {
+
+        Write-Verbose -Message 'Starting retrieving ADFS Farm configuration.';
+
+        try {
+            $AdfsProperties = Get-AdfsProperties -ErrorAction Stop;
+        }
+        catch {
+            Write-Verbose -Message ('Error occurred while retrieving ADFS properties: {0}' -f $global:Error[0].Exception.Message);
+        }
+
+        Write-Verbose -Message 'Finished retrieving ADFS Farm configuration.';
+        return $this;
+    }
+
+    [System.Boolean] Test() {
+        # Assume compliance by default
+        $Compliant = $true;
+
+
+        Write-Verbose -Message 'Testing for presence of Active Directory Federation Services (ADFS) farm.';
+
+        try {
+            $Properties = Get-AdfsProperties -ErrorAction Stop;
+        }
+        catch {
+            $Compliant = $false;
+            return $Compliant;
+        }
+
+        if ($this.Ensure -eq 'Present') {
+            Write-Verbose -Message 'Checking for presence of ADFS Farm.';
+            # Check that this a node, not the server....
+            # if ($env:COMPUTERNAME -ne $Properties.HostName) {
+            #     Write-Verbose -Message 'ADFS Service Name doesn''t match the desired state.';
+            #     $Compliant = $false;
+            # }
+        }
+
+        if ($this.Ensure -eq 'Absent') {
+            Write-Verbose -Message 'Checking for absence of ADFS Farm.';
+            if ($Properties) {
+                Write-Verbose -Message
+                $Compliant = $false;
+            }
+        }
+
+        return $Compliant;
+    }
+
+    [void] Set() {
+
+        ### If ADFS Farm shoud be present, then go ahead and install it.
+        if ($this.Ensure -eq [Ensure]::Present) {
+            try {
+                $AdfsProperties = Get-AdfsProperties -ErrorAction stop;
+            }
+            catch {
+                $AdfsProperties = $false
+            }
+
+            if (!$AdfsProperties) {
+                Write-Verbose -Message 'Installing Active Directory Federation Services (ADFS) farm.';
+
+                $AdfsNode = @{
+                    ServiceCredential = $this.ServiceCredential;
+                    PrimaryADFSServer = $this.PrimaryADFSServer;
+                };
+
+                if ($this.CertificateThumbprint) {
+                    $AdfsNode.Add('CertificateThumbprint', $this.CertificateThumbprint);
+                }
+                elseif ($this.CertificateSubject) {
+                    $AdfsNode.Add('CertificateSubject', $this.CertificateSubject);
+                }
+                else {
+                    Throw "No Certificate details provided, cannot configure ADFS Farm."
+                }
+
+                AddADFSNode @AdfsNode;
+            }
+
+            if ($AdfsProperties) {
+                Write-Verbose -Message 'Configuring Active Directory Federation Services (ADFS) properties.';
+                $AdfsProperties = @{
+                    DisplayName = $this.DisplayName;
+                };
+                Set-AdfsProperties @AdfsProperties;
+            }
+        }
+
+        if ($this.Ensure -eq [Ensure]::Absent) {
+            ### From the help for Remove-AdfsFarmNode: The Remove-AdfsFarmNode cmdlet is deprecated. Instead, use the Uninstall-WindowsFeature cmdlet.
+            Uninstall-WindowsFeature -Name ADFS-Federation;
+        }
+
+        return;
+    }
+}
+
+
+[DscResource()]
+class cADFSDeviceRegistration {
+    <#
+    The Ensure property is used to determine if the Active Directory Federation Service (ADFS) should be installed (Present) or not installed (Absent).
+    #>
+    [DscProperty(Mandatory)]
+    [Ensure] $Ensure;
+
+    [DscProperty(key)]
+    [string] $DomainName;
+
+    [DscProperty(Mandatory)]
+    [string] $ServiceAccountName
+    
+    <#
+    The ServiceCredential property is a PSCredential that represents the username/password that the
+    #>
+    [DscProperty(Mandatory)]
+    [pscredential] $ServiceCredential;
+
+    <#
+    The InstallCredential property is a PSCredential that represents the username/password of an Active Directory user account that is a member of
+    the Domain Administrators security group. This account will be used to install Active Directory Federation Services (ADFS).
+    #>
+    [DscProperty(Mandatory)]
+    [pscredential] $InstallCredential;
+
+    [DscProperty()]
+    [Int] $RegistrationQuota;
+
+    [DscProperty()]
+    [Int] $MaximumRegistrationInactivityPeriod;
+    
+    [cADFSDeviceRegistration] Get() {
+
+        Write-Verbose -Message 'Starting retrieving ADFS Device Registration status.';
+
+        try {
+            $AdfsRegistration = Get-AdfsDeviceRegistration;
+        }
+        catch {
+            Write-Verbose -Message ('Error occurred while retrieving ADFS properties: {0}' -f $global:Error[0].Exception.Message);
+        }
+
+        Write-Verbose -Message 'Finished retrieving ADFS Farm configuration.';
+        return $this;
+    }
+
+    [System.Boolean] Test() {
+        # Assume compliance by default
+        $Compliant = $true;
+
+
+        Write-Verbose -Message 'Testing for presence of Active Directory Federation Services (ADFS) farm.';
+
+        try {
+            $AdfsDeviceRegistration = Get-AdfsDeviceRegistration;
+        }
+        catch {
+            $Compliant = $false;
+            return $Compliant;
+        }
+
+        if ($this.Ensure -eq 'Present') {
+            Write-Verbose -Message 'Checking for enabled ADFS Device Registration.';
+        }
+
+        if ($this.Ensure -eq 'Absent') {
+            Write-Verbose -Message 'Checking for disabled ADFS Device Registration.';
+            if ($AdfsDeviceRegistration) {
+                Write-Verbose -Message
+                $Compliant = $false;
+            }
+        }
+
+        return $Compliant;
+    }
+
+    [void] Set() {
+
+        ### If ADFS Farm shoud be present, then go ahead and install it.
+        if ($this.Ensure -eq [Ensure]::Present) {
+            Write-Verbose -Message 'Initializing Active Directory Device Registration.';
+
+            $Initialize = @{
+                ServiceAccountName = $this.ServiceAccountName
+                DeviceLocation = $this.DomainName
+                RegistrationQuota = $this.RegistrationQuota
+                MaximumRegistrationInactivityPeriod = $this.MaximumRegistrationInactivityPeriod
+                Credential = $this.InstallCredential
+            };
+            Initialize-ADDeviceRegistration @Initialize -Force
+
+            Write-Verbose -Message 'Enabling ADFS Device Registration.';
+            Enable-AdfsDeviceRegistration -Credential $this.InstallCredential -Force
+        }
+
+        if ($this.Ensure -eq [Ensure]::Absent) {
+            Write-Verbose -Message 'Disabling ADFS Device Registration.';
+            Disable-AdfsDeviceRegistration
+        }
+
+        return;
+    }
+}
+
 <#
     .SYNOPSIS
     Locates one or more certificates using the passed certificate selector parameters.
