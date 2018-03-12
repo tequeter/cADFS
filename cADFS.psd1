@@ -37,8 +37,4 @@
         'cADFSNode'
         'cADFSDeviceRegistration'
         )
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> 52e3bc695a3318138f90dcb0e0b10648a6574ad2
