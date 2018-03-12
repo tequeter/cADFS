@@ -45,7 +45,6 @@ function InstallADFSFarm {
         [Parameter(Mandatory = $true)]
         [string] $ServiceName,
         [hashtable] $AdminConfiguration
-
     )
 
     $CmdletName = $PSCmdlet.MyInvocation.MyCommand.Name;
@@ -76,11 +75,22 @@ function InstallADFSFarm {
         $adfsConfig.Add('GroupServiceAccountIdentifier', $GroupServiceAccountIdentifier);
     }
 
-    if($AdminConfiguration){
-        $adfsConfig.Add('AdminConfiguration', $AdminConfiguration);
-    }
-
+    Write-Verbose -Message ('Start install');
     Install-AdfsFarm @adfsConfig
+    Write-Verbose -Message ('End install');
+
+    if($AdminConfiguration){
+        Write-Verbose -Message 'Configuring Active Directory Federation Services (ADFS) properties.';
+        $AdfsPropertiesNew = $AdminConfiguration
+        $AdfsPropertiesNew.Add('DisplayName', $DisplayName);
+        
+        Set-AdfsProperties @AdfsPropertiesNew;
+        
+        if($AdfsPropertiesNew.CertificateDuration -and $Primary){
+            Write-Verbose -Message ('Changing certificate duration. Force certificate renewal');
+            Update-AdfsCertificate -Urgent
+        }
+    }
 
     Write-Verbose -Message ('Leaving function {0}' -f $CmdletName);
 }
@@ -267,8 +277,6 @@ class cADFSFarm {
                         DisplayName = $this.DisplayName;
                     }
                 }
-                
-                $tmp = $AdfsPropertiesNew.GetEnumerator()  | ForEach-Object{ "$($_.Name)=$($_.Value)" }
                 
                 Set-AdfsProperties @AdfsPropertiesNew;
             }
