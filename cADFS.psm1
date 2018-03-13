@@ -1162,6 +1162,14 @@ function Find-Certificate {
 } # end function Find-Certificate
 
 
+<#
+    .SYNOPSIS
+    Convert a string containing an hashtable to an hashtable. This workaround is necessary because DSC in not handling properly hashtable properties.
+
+    .PARAMETER String
+    The string containing a JSON
+
+#>
 function Convert-StringToHashtable {
     Param (
         [Parameter(Mandatory = $true)]
@@ -1174,7 +1182,7 @@ function Convert-StringToHashtable {
     $data = $ast.Find( { $args[0] -is [System.Management.Automation.Language.HashtableAst] }, $false )
 
     return [Hashtable] $data.SafeGetValue()
-}
+} # end function Convert-StringToHashtable
 
 return;
 
