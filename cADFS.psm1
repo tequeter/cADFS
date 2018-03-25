@@ -24,21 +24,27 @@ function InstallADFSFarm {
 
     .Parameter
     #>
-    [CmdletBinding(DefaultParameterSetName = 'CertificateThumbprint')]
+    [CmdletBinding(DefaultParameterSetName = 'CertificateThumbprintServiceAccount')]
     param (
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateThumbprintServiceAccount')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateSubjectServiceAccount')]
         [pscredential] $ServiceCredential,
         [Parameter(Mandatory = $true)]
         [pscredential] $InstallCredential,
-        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateThumbprint')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateThumbprintGMSA')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateSubjectGMSA')]
+        [string] $GroupServiceAccountIdentifier,
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateThumbprintServiceAccount')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateThumbprintGMSA')]
         [string] $CertificateThumbprint,
-        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateSubject')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateSubjectServiceAccount')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'CertificateSubjectGMSA')]
         [string] $CertificateSubject,
         [Parameter(Mandatory = $true)]
         [string] $DisplayName,
         [Parameter(Mandatory = $true)]
-        [string] $ServiceName
-
+        [string] $ServiceName,
+        [hashtable] $AdminConfiguration
     )
 
     $CmdletName = $PSCmdlet.MyInvocation.MyCommand.Name;
@@ -53,13 +59,38 @@ function InstallADFSFarm {
 
     Write-Verbose -Message ('Entering function {0}' -f $CmdletName);
 
-    Install-AdfsFarm `
-        -CertificateThumbprint:$CertificateThumbprint `
-        -Credential $installCredential `
-        -FederationServiceDisplayName $DisplayName `
-        -FederationServiceName $ServiceName `
-        -OverwriteConfiguration:$true `
-        -ServiceAccountCredential $serviceCredential;
+    $adfsConfig = @{
+        CertificateThumbprint           = $CertificateThumbprint
+        Credential                      = $installCredential
+        FederationServiceDisplayName    = $DisplayName
+        FederationServiceName           = $ServiceName
+        OverwriteConfiguration          = $true
+
+    }
+
+    if ($serviceCredential){
+        $adfsConfig.Add('ServiceAccountCredential', $serviceCredential);
+    }
+    else{
+        $adfsConfig.Add('GroupServiceAccountIdentifier', $GroupServiceAccountIdentifier);
+    }
+
+    Write-Verbose -Message ('Start install');
+    Install-AdfsFarm @adfsConfig
+    Write-Verbose -Message ('End install');
+
+    if($AdminConfiguration){
+        Write-Verbose -Message 'Configuring Active Directory Federation Services (ADFS) properties.';
+        $AdfsPropertiesNew = $AdminConfiguration
+        $AdfsPropertiesNew.Add('DisplayName', $DisplayName);
+        
+        Set-AdfsProperties @AdfsPropertiesNew;
+        
+        if($AdfsPropertiesNew.CertificateDuration -and $Primary){
+            Write-Verbose -Message ('Changing certificate duration. Force certificate renewal');
+            Update-AdfsCertificate -Urgent
+        }
+    }
 
     Write-Verbose -Message ('Leaving function {0}' -f $CmdletName);
 }
@@ -101,8 +132,14 @@ class cADFSFarm {
     <#
     The ServiceCredential property is a PSCredential that represents the username/password that the
     #>
-    [DscProperty(Mandatory)]
+    [DscProperty()]
     [pscredential] $ServiceCredential;
+
+    <#
+    The name of the group service account to be used by the ADFS service
+    #>
+    [DscProperty()]
+    [string] $GroupServiceAccountIdentifier;
 
     <#
     The InstallCredential property is a PSCredential that represents the username/password of an Active Directory user account that is a member of
@@ -110,13 +147,19 @@ class cADFSFarm {
     #>
     [DscProperty(Mandatory)]
     [pscredential] $InstallCredential;
+    
+    <#
+    A string containing the hashtable of ADFS AdminConfiguration
+    #>
+    [DscProperty()]
+    [String] $AdminConfiguration;
 
     [cADFSFarm] Get() {
 
         Write-Verbose -Message 'Starting retrieving ADFS Farm configuration.';
 
         try {
-            $AdfsProperties = Get-AdfsProperties -ErrorAction Stop;
+            Get-AdfsProperties -ErrorAction Stop;
         }
         catch {
             Write-Verbose -Message ('Error occurred while retrieving ADFS properties: {0}' -f $global:Error[0].Exception.Message);
@@ -147,6 +190,15 @@ class cADFSFarm {
                 Write-Verbose -Message 'ADFS Service Name doesn''t match the desired state.';
                 $Compliant = $false;
             }
+            else{
+                $AdfsConfig = Convert-StringToHashtable $this.AdminConfiguration
+
+                $AdfsConfig.GetEnumerator() | ForEach-Object{
+                    if($_.Value -ne $Properties."$($_.Name)"){
+                        $Compliant = $false;
+                    }
+                }
+            }
         }
 
         if ($this.Ensure -eq 'Absent') {
@@ -157,6 +209,13 @@ class cADFSFarm {
             }
         }
 
+        if($Compliant){
+            Write-Verbose -Message 'Compliance status: true'
+        }
+        else{
+            Write-Verbose -Message 'Compliance status: false'
+        }
+        
         return $Compliant;
     }
 
@@ -174,7 +233,6 @@ class cADFSFarm {
             if (!$AdfsProperties) {
                 Write-Verbose -Message 'Installing Active Directory Federation Services (ADFS) farm.';
                 $AdfsFarm = @{
-                    ServiceCredential = $this.ServiceCredential;
                     InstallCredential = $this.InstallCredential;
                     DisplayName = $this.DisplayName;
                     ServiceName = $this.ServiceName;
@@ -190,15 +248,37 @@ class cADFSFarm {
                     Throw "No Certificate details provided, cannot configure ADFS Farm."
                 }
 
+                if ($this.AdminConfiguration) {
+                    $AdfsConfig = Convert-StringToHashtable $this.AdminConfiguration
+                    $AdfsFarm.Add('AdminConfiguration', $AdfsConfig);
+                }
+
+                if($this.ServiceCredential) {
+                    $AdfsFarm.Add('ServiceCredential', $this.ServiceCredential);
+                }
+                elseif ($this.GroupServiceAccountIdentifier) {
+                    $AdfsFarm.Add('GroupServiceAccountIdentifier', $this.GroupServiceAccountIdentifier);
+                }
+                else {
+                    Throw "No service account nor GMSA details provided, cannot configure ADFS Farm."
+                }
+                
                 InstallADFSFarm @AdfsFarm;
             }
 
             if ($AdfsProperties) {
                 Write-Verbose -Message 'Configuring Active Directory Federation Services (ADFS) properties.';
-                $AdfsProperties = @{
-                    DisplayName = $this.DisplayName;
-                };
-                Set-AdfsProperties @AdfsProperties;
+                if($this.AdminConfiguration){
+                    $AdfsPropertiesNew = Convert-StringToHashtable $this.AdminConfiguration
+                    $AdfsPropertiesNew.Add('DisplayName', $this.DisplayName);
+                }
+                else{
+                    $AdfsPropertiesNew = @{
+                        DisplayName = $this.DisplayName;
+                    }
+                }
+                
+                Set-AdfsProperties @AdfsPropertiesNew;
             }
         }
 
@@ -1080,6 +1160,29 @@ function Find-Certificate {
 
     return $certs
 } # end function Find-Certificate
+
+
+<#
+    .SYNOPSIS
+    Convert a string containing an hashtable to an hashtable. This workaround is necessary because DSC in not handling properly hashtable properties.
+
+    .PARAMETER String
+    The string containing a JSON
+
+#>
+function Convert-StringToHashtable {
+    Param (
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [String]
+        $String
+    )
+
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($String, [ref] $null, [ref] $null)
+    $data = $ast.Find( { $args[0] -is [System.Management.Automation.Language.HashtableAst] }, $false )
+
+    return [Hashtable] $data.SafeGetValue()
+} # end function Convert-StringToHashtable
 
 return;
 
