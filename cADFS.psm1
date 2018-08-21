@@ -72,7 +72,7 @@ function InstallADFSFarm {
     }
 
     if ($SSLPort) {
-        $adfsConfig.Add(('SSLPort', $SSLPort)
+        $adfsConfig.Add('SSLPort', $SSLPort);
     }
 
     if ($serviceCredential){
