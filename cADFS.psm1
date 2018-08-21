@@ -262,7 +262,7 @@ class cADFSFarm {
                 }
 
                 if ($this.SSLPort) {
-                    $AdfsFarm.Add('SSLPort',$SSLPort);
+                    $AdfsFarm.Add('SSLPort',$this.SSLPort);
                 }
 
                 if ($this.AdminConfiguration) {
