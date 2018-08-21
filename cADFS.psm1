@@ -44,7 +44,10 @@ function InstallADFSFarm {
         [string] $DisplayName,
         [Parameter(Mandatory = $true)]
         [string] $ServiceName,
+        [Parameter(Mandatory = $false)]
+        [string] $SSLPort,
         [hashtable] $AdminConfiguration
+
     )
 
     $CmdletName = $PSCmdlet.MyInvocation.MyCommand.Name;
@@ -66,6 +69,10 @@ function InstallADFSFarm {
         FederationServiceName           = $ServiceName
         OverwriteConfiguration          = $true
 
+    }
+
+    if ($SSLPort) {
+        $adfsConfig.Add('SSLPort', $SSLPort);
     }
 
     if ($serviceCredential){
@@ -114,6 +121,12 @@ class cADFSFarm {
     #>
     [DscProperty(key)]
     [string] $ServiceName;
+
+    <#
+    The SSLPort property specifies a non-standard SSL Port. For example: 8443.
+    #>
+    [DscProperty(key)]
+    [string] $SSLPort;
 
     <#
     The CertificateThumbprint property is the thumbprint of the certificate, located in the local computer's certificate store, that will be bound to the
@@ -246,6 +259,10 @@ class cADFSFarm {
                 }
                 else {
                     Throw "No Certificate details provided, cannot configure ADFS Farm."
+                }
+
+                if ($this.SSLPort) {
+                    $AdfsFarm.Add('SSLPort',$this.SSLPort);
                 }
 
                 if ($this.AdminConfiguration) {
