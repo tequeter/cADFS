@@ -125,7 +125,7 @@ class cADFSFarm {
     <#
     The SSLPort property specifies a non-standard SSL Port. For example: 8443.
     #>
-    [DscProperty(key)]
+    [DscProperty()]
     [string] $SSLPort;
 
     <#
