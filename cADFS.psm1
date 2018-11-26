@@ -651,25 +651,25 @@ class cADFSSamlEndpoint {
             Binding = $this.Binding;
             Uri = $this.Location;
             Protocol = $this.Protocol;
+            Index = $this.Index;
         }
         if ($this.IsDefault) {
             $SAMLEndpoint.Add('IsDefault', $this.IsDefault);
         }
 
         $ReplacementSAMLEndpoint = New-AdfsSamlEndpoint @SAMLEndpoint;
-
-        $AllNewSAMLEndpoints = @();
-        $AllCurrentSAMLEndpoints = (Get-AdfsRelyingPartyTrust -Name $this.Name).SamlEndpoints;
-        ForEach ($CurrentSAMLEndpoint in $AllCurrentSAMLEndpoints) {
-            If ($CurrentSAMLEndpoint.Protocol -eq $this.Protocol -and $CurrentSAMLEndpoint.Index -eq $this.Index) {
-                $AllNewSAMLEndpoints += $ReplacementSAMLEndpoint;
-            } Else {
-                $AllNewSAMLEndpoints += $CurrentSAMLEndpoint;
-            }
+        $AllSAMLEndpoints = (Get-AdfsRelyingPartyTrust -Name $this.Name).SamlEndpoints;
+        [object[]] $OtherSAMLEndpoints = $AllSAMLEndpoints | where-object { $_.Protocol -ne $this.Protocol -or $_.Index -ne $this.Index };
+        if ($AllSAMLEndpoints.length -ne $OtherSAMLEndpoints.length) {
+            Write-Verbose -Message 'Replacing existing SAML Endpoint';
+        } else {
+            Write-Verbose -Message 'Adding new SAML Endpoint';
         }
+        $NewSAMLEndpoints = $OtherSAMLEndpoints
+        $NewSAMLEndpoints += $ReplacementSAMLEndpoint;
 
-        Set-AdfsRelyingPartyTrust -TargetName $this.Name -SamlEndpoint $AllNewSAMLEndpoints;
-        Write-Verbose -Message 'Finished setting ADFS Global Authentication configuration.';
+        Set-AdfsRelyingPartyTrust -TargetName $this.Name -SamlEndpoint $NewSAMLEndpoints;
+        Write-Verbose -Message 'Finished setting SAML Endpoint configuration.';
     }
 }
 #endregion
