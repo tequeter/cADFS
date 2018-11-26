@@ -568,8 +568,8 @@ class cADFSSamlEndpoint {
     [DscProperty()]
     [Ensure] $Ensure;
 
-    ### The Name property must be unique to each ADFS Relying Party application in a farm.
-    [DscProperty(Key)]
+    ### References the ADFS Relying Party in which to install this SAMLEndpoint
+    [DscProperty(Mandatory)]
     [string] $Name;
 
     ### Binding type (POST, Redirect, Artifact)
